@@ -1,0 +1,416 @@
+---
+title: "Heart Disease: Contributing Factors and Their Relationships"
+author: "Olivia Bojesen"
+date: "11/05/2023"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      error = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+```
+
+# Introduction
+Throughout this analysis, we were interested in determining if there are certain factors that are associated with a higher risk of heart disease. Using this information we wanted to create a model that is able to accurately predict whether a new patient is at risk for heart disease based on the measurements given.
+
+```{r include = FALSE}
+
+# Cleaning the data
+
+library(tidyverse)
+library(ggplot2)
+
+hd_data <- read.table("processed.heartdisease.txt", sep = ",", header = T)
+head(hd_data)
+
+# "?"s in ca & thal columns -- removed these rows in order to perform analysis on observations with full information available
+hd_data$ca <- as.integer(hd_data$ca)
+hd_data$thal <- as.integer(hd_data$thal)
+
+hd_clean <- hd_data %>% 
+  filter(ca != "NA") %>%
+  filter(thal != "NA")
+
+hd_clean <- as.data.frame(hd_clean)
+
+# Factoring categorical variables
+hd_clean$sex <- factor(hd_clean$sex)
+hd_clean$cp <- factor(hd_clean$cp)
+hd_clean$fbs <- factor(hd_clean$fbs)
+hd_clean$restecg <- factor(hd_clean$restecg)
+hd_clean$exang <- factor(hd_clean$exang)
+hd_clean$slope <- factor(hd_clean$slope)
+hd_clean$thal <- factor(hd_clean$thal)
+
+# Creating a dataset with a binary heart disease variable
+# 0 indicates no heart disease (keep 0)
+# 1-4 indicate varying levels of heart disease (assign to 1)
+hd_clean_bin <- hd_clean %>%
+  mutate(num_bin = case_when(str_detect(num, "0") ~ 0, TRUE ~ 1)) %>%
+  dplyr::select(-num)
+
+# Distribution of heart disease severity among patients
+hd_clean %>%
+  count(num)
+
+hd_clean_bin %>%
+  count(num_bin)
+
+```
+
+# Description of the Data
+The data initially had 303 patients included, however six observations were removed due to random missing values, so the following analysis was done on the remaining 297 patients. The majority of these 297 patients (53.87%) indicated no heart disease. Those with heart disease were assigned numbers 1 through 4 to indicate increasing levels of heart disease severity and as heart disease severity increased, observations decreased. The variables taken into account included demographic data such as age and sex, along with information from various medical tests such as chest pain type, resting blood pressure, and maximum heart rate achieved. Eight of the fourteen variables were categorical. Due to this, many of the analyses performed were done on the remaining six numerical explanatory variables.
+
+# Methods
+All analysis on this historical medical data was done in R. Exploratory analysis was used to determine associated groups of variables that may exist. We used Bartlett's test with a significance level of 0.05 to determine that factor analysis was an appropriate method for the data, which was used to find underlying groups of the six numerical variables. We decided which variables were fit for factor analysis by using the Kaiser-Meyer-Olkin (KMO) Measure of Sampling Adequacy (MSA) to keep variables with an MSA above 0.5.
+
+Using the principal component method of factor analysis, the number of components and the variables kept were chosen based on retaining variables with communalities (h2) greater than 0.5. Extracting three components using all six variables fit this criteria and was determined to be the best way to have as much shared variance among variables as possible without getting rid of too many variables, which was the case when extracting only two components. 
+
+K-means clustering was used to determine groups of patients that may exist. The number of clusters, k, was chosen to be the point before the within cluster sum of squares began to level off on the scree plot. The clusters of patients were colored on the principal component plot to visualize how they related to the variables associated with the principal components.
+
+Due to the large number of variables (thirteen), we looked at different ways of reducing dimensions such as principal component analysis (PCA) and non-metric multidimensional scaling (NMDS). To determine the number of components to use for PCA, percent of variance explained was taken into account. For NMDS, we used a stress level of 10 to represent a good fit. However, for both PCA and NMDS, the understandability of the visualizations produced and the interpretation of the components were important factors for selecting the number of components used in the plots.
+
+Hotelling’s T-square test was used to test if there was a significant difference between the group of patients with and without heart disease. A significance level of 0.05 was used.
+
+We used linear discriminant analysis to determine a model for predicting whether or not a patient is at risk for heart disease. 75% of the data was assigned to a training set that was used to build the model and this was then tested on the remaining 25% of the data. The accuracy of the model was determined by the following measures: misclassification rate, sensitivity, specificity, and the area under the ROC curve. Although LDA is not intended for categorical data, the model proved to be accurate enough for us to move forward with this method. Weighting of the group with heart disease was increased to produce a sensitivity percentage above 80%.
+
+
+```{r include = FALSE}
+
+# 1. Are there notable associations/relationships between some of the variables? Are there any meaningful groups of variables that exhibit these associations? If so, describe them.
+
+# Checking correlations
+library(Hmisc)
+round(rcorr(as.matrix(hd_clean),type = "pearson")$r, 2)
+
+## Factor Analysis
+library(psych)
+
+# Use Bartlett's test to determine if factor analysis is useful
+cors1 <- cor(hd_clean[, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")])
+cortest.bartlett(cors1, n = 297)
+# Low p-value -> Use factor analysis
+
+KMO(cors1)
+# Using Kaiser's recommendation of keeping variables with values above .5 -> keep all
+
+# Scree plot to determine possible appropriate number of components
+efa.pc <- princomp(hd_clean[, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")], cor=TRUE)
+plot(efa.pc,type="lines") # scree plot 
+abline(h=1,lty=2)  # add horizontal dotted line at 1
+
+# FA with 2 components
+hd.out2 <- principal(hd_clean[, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")], nfactors = 2, rotate="varimax")
+print.psych(hd.out2, cut=.5, sort=TRUE)
+
+# FA with 3 components
+hd.out3 <- principal(hd_clean[, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")], nfactors = 3, rotate="varimax")
+print.psych(hd.out3,cut=.5,sort=TRUE)
+# Using 3 PCs rather than 2; better fit metrics
+
+```
+
+# Results
+Conducting factor analysis on the six numerical variables in the dataset showed associations between the number of major vessels colored by fluoroscopy, ST depression induced by exercise relative to rest, age, and maximum heart rate achieved, with maximum heart rate being negatively related to the former three variables. Using three components explained 68% of variance, so while the model is missing out on some unexplained variance, it gives us an idea of groups formed by the variables as we move into further analysis. 
+
+Figures 1 and 2 below show relationships between some of the associated variables mentioned. In figure 2 we can see that more patients with heart disease are older and have a lower maximum heart rate.
+
+```{r}
+
+# 2. Is there a way to graphically represent the raw data for the 303 patients and draw conclusions about the data set from such a graph?
+my.color.vector <- c("#6065FD", "#fc8d59", "#ED3D3D", "#581845")
+
+ggplot2::ggplot(data = hd_clean_bin, aes(x = age, y = thalach, color = factor(ca))) +
+  geom_point() +
+  scale_color_manual(values = my.color.vector) +
+  labs(color = "Number of Major Vessels", x = "Age", y = "Maximum Heart Rate Achieved", title = "Maximum Heart Rate vs. Age", caption = "Figure 1") +
+  theme_classic() +
+  theme(plot.caption = element_text(hjust = 0.5))
+
+
+ggplot2::ggplot(data = hd_clean_bin, aes(x = age, y = thalach, color = factor(num_bin))) +
+  geom_point() +
+  scale_color_manual(values = c("#6065FD", "#ED3D3D"), labels = c("No heart disease", "Heart disease")) +
+  labs(color = "Presence of Heart Disease", x = "Age", y = "Maximum Heart Rate Achieved", title = "Maximum Heart Rate vs. Age", caption = "Figure 2") +
+  theme_classic() +
+  theme(plot.caption = element_text(hjust = 0.5))
+
+```
+
+```{r include = FALSE}
+
+# 3. What are the basic underlying groups that the individuals form? Can you plot the data in a small number of dimensions, showing the group separation of the patients?
+
+# K-means clustering
+hd.scaled <- scale(hd_clean[, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")])
+
+# Seeing where within sum of squares levels off relative to number of clusters, k
+n <- 8 # Number of clusters to run through
+wss <- numeric(n)
+set.seed(150)
+
+for (i in 1:n) {
+  kmeans.out <- kmeans(hd.scaled, centers = i, nstart = 20)
+  wss[i] <- kmeans.out$tot.withinss
+}
+wss_df <- tibble(clusters = 1:n, wss = wss)
+ 
+screeplot <- ggplot(wss_df, aes(x = clusters, y = wss, group = 1)) +
+  geom_point() +
+  geom_line() +
+  xlab("Number of clusters") +
+  ylab("Within Sum of Squares")
+
+screeplot
+
+# K means clustering using k = 4
+hd.k4 <- kmeans(hd.scaled, centers=4, iter.max=100, nstart=25)
+
+```
+
+
+Using k-means clustering with k = 4 components gave us insight into the groups the patients formed based on the six numerical variables we had. The principal component plot below (Figure 3) shows the four clusters by color.
+
+
+```{r include = FALSE}
+
+## Principal Components Analysis
+hd.pca <- princomp(hd_clean[, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")], cor=T)
+pca.data <- data.frame(hd.pca$scores)
+
+# Showing the coefficients of the components
+summary(hd.pca, loadings=T)
+
+```
+
+```{r}
+
+# Plotting the first 2 PC scores, coloring by cluster
+ggplot(data = pca.data, aes(x = Comp.1, y = Comp.2, color = factor(hd.k4$cluster), shape = factor(hd_clean_bin$num_bin))) +
+  geom_point() +
+  scale_color_manual(values = my.color.vector) +
+  labs(shape = "Presence of Heart Disease", color = "Cluster", x = "Principal Component 1", y = "Principal Component 2", caption = "Figure 3") +
+  scale_shape_discrete(labels = c("No heart disease", "Heart disease")) +
+  theme_classic() +
+  theme(plot.caption = element_text(hjust = 0.5))
+
+```
+
+
+Figure 3 above displays the clusters plotted against the first two components, which account for about 53% of variance. While there is more dimensionality to the data than what is seen here, this plot allows us to easily visualize all six variables in just two dimensions. Component 1 reiterates our findings from the factor analysis completed above, where a higher value for the first component indicates high values for number of major vessels, ST depression, and age, along with a low maximum heart rate. Component 2 is composed of high values of serum cholesterol, resting blood pressure, and maximum heart rate.
+
+Figure 3 also shows whether a patient has heart disease, as seen by the shape of the points. As we can see, those with heart disease tend to be further to the right with respect to component 1. We can also see that cluster 1 has fewer patients with heart disease than the other 3 clusters and is further to the left. Both of these observations would suggest that higher age, more major vessels, higher ST depression measurement and lower maximum heart rate are associated with heart disease.
+
+Unlike PCA, non-metric multidimensional scaling (NMDS) was able to reduce dimensions of all thirteen variables of interest, categorical variables included.  We used five components to reduce the dimensions of our original thirteen variables, which gave a stress value of 10.23, indicating a fairly good fit. Figure 4 below plots the patient data and their heart disease status with respect to the first two coordinates.
+
+```{r include = FALSE}
+
+# Non-metric MDS inclusive of numerical and categorical variables
+library(MASS)
+
+library(cluster)
+daisy.diss <- daisy(hd_clean[1:13])
+
+# Find number of components which will give a stress value <=10
+mds.stress <- NULL
+for (i in 1:6){
+  mds.stress[i]<-isoMDS(daisy.diss, k = i)$stress
+}
+
+plot(mds.stress); abline(h=10)
+# 5 components needed for stress of 10
+
+```
+
+```{r include = FALSE}
+
+daisy.NMDS <- isoMDS(daisy.diss, k = 5)
+daisy_NMDS_points <- data.frame(daisy.NMDS$points)
+
+```
+
+```{r}
+
+# NMDS plot for no heart disease vs heart disease
+ggplot(daisy_NMDS_points, aes(x = X1, y = X2, color = factor(hd_clean_bin$num_bin))) +
+  geom_point() +
+  scale_color_manual(values = c("#6065FD", "#ED3D3D"), labels = c("No heart disease", "Heart disease")) +
+  labs(color = "Presence of Heart Disease", x = "Coordinate 1", y = "Coordinate 2", caption = "Figure 4") +
+  theme_classic() +
+  theme(plot.caption = element_text(hjust = 0.5))
+
+#colors.severity <- c("#6065FD", "#fdcc8a", "#fc8d59", "#ED3D3D", "#581845")
+
+# NMDS plot for different levels of heart disease severity
+#ggplot(daisy_NMDS_points, aes(x = X1, y = X2, color = factor(hd_clean$num))) +
+#  geom_point() +
+#  scale_color_manual(values = colors.severity) +
+#  labs(color = "Heart Disease Severity", x = "Coordinate 1", y = "Coordinate 2", caption = "Figure 5") +
+#  theme_classic() +
+#  theme(plot.caption = element_text(hjust = 0.5))
+
+```
+
+Coordinate 1 has a clearer association with heart disease than coordinate 2. While there is overlap in the middle of the plot, we can see that patients with heart disease have higher coordinate 1 values. This indicates that there are similarities in patients who have heart disease.
+
+We used the Hotelling’s T-square test to determine if there is a statistical difference in any of the variables between the group of patients with and without heart disease. This test resulted in a p-value of 0, showing that there is a significant difference in at least one of the measurements between the two groups. Simultaneous confidence intervals showed that patients with heart disease are older, have higher ST depression measurements, have more colored major vessels, and achieved a lower maximum heart rate than those without heart disease.
+
+```{r include = FALSE}
+
+# 4. Are there interesting differences in any of the recorded fields with respect to heart disease diagnosis?
+
+group0 <- hd_clean_bin[hd_clean_bin$num_bin == 0, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")]
+group1 <- hd_clean_bin[hd_clean_bin$num_bin == 1, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")]
+
+library(Hotelling)
+ht.out <- hotelling.test(group0, group1)
+
+
+# Simultaneous Confidence Intervals
+m1 <- colMeans(group0)
+m2 <- colMeans(group1)
+
+var1 <- sapply(group0, var)
+var2 <- sapply(group1, var)
+
+n1 <- nrow(group0)
+n2 <- nrow(group1)
+q = 6
+
+library(grt)
+Sp <- mcovs(hd_clean_bin[, c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")], hd_clean_bin$num_bin, pooled =TRUE)$covs$pooled
+
+mean.diffs <- m1-m2
+sim.ME <- sqrt(2*q*(n1-1)/(2*n1-q-1)*qf(.95,q,2*n1-q-1))*sqrt(2*diag(Sp)/n1)
+sim.CIs <- data.frame(matrix(c(mean.diffs-sim.ME, mean.diffs+sim.ME), ncol=2))
+names(sim.CIs) <- c("Lower", "Upper")
+rownames(sim.CIs) <- c("age", "trestbps", "chol", "thalach", "oldpeak", "ca")
+sim.CIs
+
+```
+
+With our data, we were able to create a model using linear discriminant analysis that can predict the presence of heart disease for patients whose measurements are known for all 13 explanatory variables. Our model was fit using 75% of the data and was then tested on the remaining 25% of the data to determine accuracy. Table 1 shows different measures of accuracy.
+
+```{r}
+
+# 5. If the researchers were to investigate a new patient observation that had known measurements for the 13 explanatory variables, could we determine a rule for predicting that patient's heart disease status (no heart disease vs presence of heart disease)? How accurate could you expect such a rule to be?
+
+# LDA with split data
+smp_size <- floor(0.75 * nrow(hd_clean_bin))
+train_ind <- sample(nrow(hd_clean_bin), size = smp_size)
+training.df <- as.data.frame(hd_clean_bin[train_ind, ])
+testing.df <- as.data.frame(hd_clean_bin[-train_ind, ])
+
+hd.lda.train <- lda(num_bin ~ ., data = training.df)
+pred.test <- predict(hd.lda.train, newdata = testing.df, method = 'plug-in')$class
+#table(pred.test, testing.df$num_bin)
+
+# Misclassification rate
+miss <- ((8+2)/(37+8+2+28))*100
+
+# Sensitivity
+sens <- (28/(28+8))*100
+
+# Specificity
+spec <- (37/(37+2))*100
+
+# ROC (AUC)
+library(pROC)
+auc <- roc(testing.df$num_bin, as.numeric(pred.test))$auc[1]*100
+
+acc_measures <- data.frame(miss, sens, spec, auc) %>%
+  rename("Misclassification Rate" = miss, "Sensitivity" = sens, "Specificity" = spec, "Area Under the Curve" = auc)
+
+library(knitr)
+library(flextable)
+knitr::opts_chunk$set(echo = TRUE, fig.cap = TRUE)
+  set_flextable_defaults(
+  font.family = "Cambria", font.size = 9, 
+  theme_fun = "theme_vanilla",
+  big.mark="", table.layout="autofit")
+  
+round(acc_measures, 2) %>%
+  flextable() %>%
+  add_footer(., 'Misclassification Rate' = "Table 1")
+
+```
+
+While the specificity percentage being high (94.87%) is good, meaning few patients are incorrectly diagnosed with heart disease, the sensitivity is low. Since sensitivity measures the percentage of those with heart disease who are correctly identified as having heart disease, we want this percentage to be high. By giving more weight to those with heart disease, we can increase this percentage, however, this will increase the misclassification rate and decrease the specificity. Table 2 below shows the measures of accuracy with this new model.
+
+```{r include = FALSE}
+
+# Trying new priors to increase sensitivity
+hd.lda.train2 <- lda(num_bin ~ ., data = training.df, prior = c(.4,.6))
+pred.test2 <- predict(hd.lda.train2, newdata = testing.df, method = 'plug-in')$class
+table(pred.test2, testing.df$num_bin)
+
+# Misclassification rate
+miss2 <- ((6+5)/(34+6+5+30))*100
+
+# Sensitivity
+sens2 <- (30/(30+6))*100
+
+# Specificity
+spec2 <- (34/(34+5))*100
+
+# ROC (AUC)
+auc2 <- roc(testing.df$num_bin, as.numeric(pred.test2))$auc[1]*100
+
+acc_measures2 <- data.frame(miss2, sens2, spec2, auc2) %>%
+  rename("Misclassification Rate" = miss2, "Sensitivity" = sens2, "Specificity" = spec2, "Area Under the Curve" = auc2)
+
+```
+
+```{r echo = FALSE}
+
+round(acc_measures2, 2) %>%
+  flextable() %>%
+  add_footer(., 'Misclassification Rate' = "Table 2")
+
+```
+
+Given a patient with the following information:
+
+```{r include = FALSE}
+
+# 6. In particular, we have a new patient who is a 60 year old female. Her symptoms are non-anginal pain, a resting blood pressure of 102 mm Hg, a cholesterol measurement of 318 mg/dl, low fasting blood sugar, normal resting electrocardiographic results, a maximum heart rate of 160 beats/minute, no exercise-induced angina, no ST depression induced by exercise relative to rest, upsloping peak ST segment, only 1 colored major vessel, and normal thal diagnosis. Would you predict this patient to have heart disease? How confident are you in the classification?
+
+datafr <- rbind(hd_clean_bin, c(60, 0, 3, 102, 318, 0, 0, 160, 0, 0, 1, 1, 3, 0))
+new_patient <- datafr[298,1:13]
+
+new.pred <- predict(hd.lda.train2, newdata = new_patient)
+
+# Create table of new patient information
+Qs <- c("Age", "Sex", "Chest pain type", "Resting blood pressure", "Cholesterol measurement", "Fasting blood sugar", "Resting electrocardiographic results", "Maximum heart rate", "Exercise-induced angina", "ST depression induced by exercise relative to rest", "Peak ST segment", "Number of colored major vessels", "Thal diagnosis")
+
+As <- c(60, "Female", "Non-anginal pain", "102 mmHg", "318 mg/dl", "Low", "Normal", "106 beats/minute", "None", "None", "Upsloping", "1", "Normal")
+
+patient_info <- as.data.frame(rbind(Qs, As))
+patient_info <- data.frame(t(patient_info))
+
+```
+
+```{r echo = FALSE}
+
+patient_info %>%
+  flextable() %>%
+  set_header_labels(Qs = "New Patient", As = NA) %>%
+  add_footer(., 'Qs' = "Table 3")
+
+patient_info[1:7,] %>%
+  flextable() %>%
+  set_header_labels(Qs = "New Patient", As = NA) %>%
+  add_footer(., 'Qs' = "Table 3")
+patient_info[8:13,] %>%
+  flextable() %>%
+  set_header_labels(Qs = NA, As = NA)
+
+```
+
+our model was able to predict with 98.9% confidence that heart disease is not present.
+
+# Conclusion
+
+In this analysis we found that a lower maximum heart rate along with higher age, number of colored major vessels, and ST depression are related factors in patients and are all significantly different between patients with and without heart disease. We were able to visualize our data in 2 dimensions using non-metric MDS which showed that there are similarities in the two groups of patients: those who have heart disease and those who don't. The final model created is able to correctly predict the presence of heart disease in a patient approximately 85% of the time.
